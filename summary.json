@@ -1,0 +1,31 @@
+{
+ "MAE": 388.18152716901983,
+ "RMSE": 486.8073122321592,
+ "biais": -31.403626426620914,
+ "pct_tardif": 51.11111111111111,
+ "couverture_calibree": 80.0,
+ "couverture_brute": 66.66666666666666,
+ "modele_actif_pct": 45.55555555555556,
+ "MAE_modele_actif": 134.5204254929704,
+ "couverture_modele_actif": 73.17073170731707,
+ "MAE_prior_seul": 600.4285714285714,
+ "params": {
+  "ft": 8.0,
+  "win": 15,
+  "n0": 100,
+  "n_sigma": 4.0,
+  "persist": 10,
+  "min_pts": 150,
+  "n_boot": 300,
+  "cap": 4000,
+  "scale": 2.0
+ },
+ "delta": 120,
+ "test": [
+  "B02",
+  "B03",
+  "B07",
+  "B09",
+  "B13"
+ ]
+}

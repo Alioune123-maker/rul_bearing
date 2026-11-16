@@ -1,0 +1,551 @@
+[
+ {
+  "id": "uitab",
+  "type": "ui_tab",
+  "name": "Pronostic RUL – roulement",
+  "icon": "dashboard",
+  "order": 1,
+  "disabled": false,
+  "hidden": false
+ },
+ {
+  "id": "g_ctrl",
+  "type": "ui_group",
+  "name": "1. Capteur simulé & défauts",
+  "tab": "uitab",
+  "order": 1,
+  "disp": true,
+  "width": "6",
+  "collapse": false
+ },
+ {
+  "id": "g_view",
+  "type": "ui_group",
+  "name": "2. Indicateur de santé et RUL",
+  "tab": "uitab",
+  "order": 2,
+  "disp": true,
+  "width": "12",
+  "collapse": false
+ },
+ {
+  "id": "g_dec",
+  "type": "ui_group",
+  "name": "3. Décision de maintenance",
+  "tab": "uitab",
+  "order": 3,
+  "disp": true,
+  "width": "6",
+  "collapse": false
+ },
+ {
+  "id": "tab1",
+  "type": "tab",
+  "label": "Maintenance 4.0 – RUL roulement",
+  "disabled": false,
+  "info": "Capteur simulé -> API Python /sample -> dashboard"
+ },
+ {
+  "id": "init",
+  "type": "inject",
+  "z": "tab1",
+  "name": "init",
+  "props": [
+   {
+    "p": "payload"
+   }
+  ],
+  "repeat": "",
+  "crontab": "",
+  "once": true,
+  "onceDelay": "0.3",
+  "topic": "",
+  "payload": "",
+  "payloadType": "date",
+  "x": 110,
+  "y": 40,
+  "wires": [
+   [
+    "fninit"
+   ]
+  ]
+ },
+ {
+  "id": "fninit",
+  "type": "function",
+  "z": "tab1",
+  "name": "valeurs par défaut",
+  "func": "flow.set('life', 1500); flow.set('noise', 1); flow.set('drift', false); flow.set('run', false);\nflow.set('policy', 'q10'); flow.set('t', 0); flow.set('e', 0); return null;",
+  "outputs": 1,
+  "noerr": 0,
+  "x": 300,
+  "y": 40,
+  "wires": [
+   []
+  ]
+ },
+ {
+  "id": "tick",
+  "type": "inject",
+  "z": "tab1",
+  "name": "horloge capteur (0,1 s)",
+  "props": [
+   {
+    "p": "payload"
+   }
+  ],
+  "repeat": "0.1",
+  "crontab": "",
+  "once": false,
+  "topic": "",
+  "payload": "",
+  "payloadType": "date",
+  "x": 150,
+  "y": 120,
+  "wires": [
+   [
+    "sensor"
+   ]
+  ]
+ },
+ {
+  "id": "sensor",
+  "type": "function",
+  "z": "tab1",
+  "name": "Capteur simulé (RMS)",
+  "func": "// Capteur simulé : RMS vibratoire horizontal d'un roulement (g), 1 échantillon par tick.\nif (!flow.get('run')) return null;\nlet t = (flow.get('t') || 0) + 1; flow.set('t', t);\nconst life = flow.get('life') || 1500, noiseGain = flow.get('noise') || 1;\nconst drift = flow.get('drift') || false, FT = 8, base = 0.5, amp = 0.3;\nconst onset = Math.floor(0.5 * life);\nconst tau = Math.max(0, t - onset);\nconst k = Math.log(1 + (FT - base) / amp) / (life - onset);\nconst clean = base + amp * (Math.exp(k * tau) - 1);\nfunction gauss() { return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random()); }\nlet e = 0.6 * (flow.get('e') || 0) + 0.06 * noiseGain * gauss(); flow.set('e', e);\nlet x = clean * Math.exp(e) + 0.03 * noiseGain * gauss();\nif (Math.random() < 0.004) x += 0.5 + 1.5 * Math.random();     // choc parasite\nif (drift) x += 0.0015 * t;                                      // défaut capteur : dérive lente\nx = Math.max(0.05, x);\nif (t >= life) {                                                  // défaillance réelle\n  flow.set('run', false);\n  return [null, { payload: \"DÉFAILLANCE du roulement à t = \" + t }];\n}\nmsg.payload = { x: x }; msg.headers = { 'Content-Type': 'application/json' };\nreturn [msg, null];",
+  "outputs": 2,
+  "noerr": 0,
+  "x": 380,
+  "y": 120,
+  "wires": [
+   [
+    "http"
+   ],
+   [
+    "status"
+   ]
+  ]
+ },
+ {
+  "id": "http",
+  "type": "http request",
+  "z": "tab1",
+  "name": "API Python /sample",
+  "method": "POST",
+  "ret": "obj",
+  "paytoqs": "ignore",
+  "url": "http://localhost:5000/sample",
+  "tls": "",
+  "persist": false,
+  "proxy": "",
+  "insecureHTTPParser": false,
+  "authType": "",
+  "senderr": false,
+  "headers": [],
+  "x": 640,
+  "y": 120,
+  "wires": [
+   [
+    "fmt"
+   ]
+  ]
+ },
+ {
+  "id": "fmt",
+  "type": "function",
+  "z": "tab1",
+  "name": "Mise en forme + décision",
+  "func": "const r = msg.payload; if (!r || r.t === undefined) return null;\nconst pol = flow.get('policy') || 'q10';\nconst rul = Math.round(r[pol]), at = r['intervene_at_' + pol], alarm = r['alarm_' + pol];\nconst ts = Date.now(), r0 = v => Math.round(v * 100) / 100;\nconst hi  = [{ topic: 'Indicateur de santé (RMS lissé)', payload: r0(r.hi) }, { topic: 'Seuil de fin de vie', payload: r.ft }];\nconst rulc = [{ topic: 'RUL q10 (prudent)', payload: Math.round(r.q10) }, { topic: 'RUL médiane', payload: Math.round(r.q50) }, { topic: 'RUL q90 (optimiste)', payload: Math.min(3000, Math.round(r.q90)) }];\nconst status = alarm ? \"⚠ INTERVENIR MAINTENANT (règle \" + pol + \")\"\n  : \"Intervention conseillée à t = \" + at + \"  (dans \" + (at - r.t) + \" pas, règle \" + pol + \", délai logistique \" + r.delta + \")\";\nconst info = \"t = \" + r.t + \" | \" + (r.mode === 'model' ? \"modèle ajusté sur la dégradation\" : \"pas de dégradation détectée → prior de population\") +\n             \" | RUL \" + Math.round(r.q10) + \" – \" + Math.round(r.q50) + \" – \" + Math.round(Math.min(r.q90, 9999)) + \" (q10 – méd. – q90)\";\nreturn [hi, rulc, { payload: rul }, { payload: status }, { payload: info }];",
+  "outputs": 5,
+  "noerr": 0,
+  "x": 880,
+  "y": 120,
+  "wires": [
+   [
+    "c1"
+   ],
+   [
+    "c2"
+   ],
+   [
+    "gauge"
+   ],
+   [
+    "status"
+   ],
+   [
+    "info"
+   ]
+  ]
+ },
+ {
+  "id": "c1",
+  "type": "ui_chart",
+  "z": "tab1",
+  "group": "g_view",
+  "order": 1,
+  "x": 1130,
+  "y": 60,
+  "wires": [
+   []
+  ],
+  "name": "",
+  "label": "Indicateur de santé vs seuil de fin de vie (g)",
+  "width": "12",
+  "height": "6",
+  "chartType": "line",
+  "legend": "true",
+  "xformat": "HH:mm:ss",
+  "interpolate": "linear",
+  "nodata": "en attente…",
+  "dot": false,
+  "ymin": "0",
+  "ymax": "10",
+  "removeOlder": 1,
+  "removeOlderPoints": "1500",
+  "removeOlderUnit": "3600",
+  "cutout": 0,
+  "useOneColor": false,
+  "useUTC": false,
+  "colors": [
+   "#1f77b4",
+   "#d62728",
+   "#ff7f0e",
+   "#2ca02c",
+   "#9467bd",
+   "#8c564b",
+   "#e377c2",
+   "#7f7f7f",
+   "#bcbd22"
+  ],
+  "outputs": 1,
+  "className": ""
+ },
+ {
+  "id": "c2",
+  "type": "ui_chart",
+  "z": "tab1",
+  "group": "g_view",
+  "order": 2,
+  "x": 1130,
+  "y": 120,
+  "wires": [
+   []
+  ],
+  "name": "",
+  "label": "RUL estimée : médiane et bande d'incertitude (pas de 10 s)",
+  "width": "12",
+  "height": "6",
+  "chartType": "line",
+  "legend": "true",
+  "xformat": "HH:mm:ss",
+  "interpolate": "linear",
+  "nodata": "en attente…",
+  "dot": false,
+  "ymin": "0",
+  "ymax": "3000",
+  "removeOlder": 1,
+  "removeOlderPoints": "1500",
+  "removeOlderUnit": "3600",
+  "cutout": 0,
+  "useOneColor": false,
+  "useUTC": false,
+  "colors": [
+   "#1f77b4",
+   "#d62728",
+   "#ff7f0e",
+   "#2ca02c",
+   "#9467bd",
+   "#8c564b",
+   "#e377c2",
+   "#7f7f7f",
+   "#bcbd22"
+  ],
+  "outputs": 1,
+  "className": ""
+ },
+ {
+  "id": "gauge",
+  "type": "ui_gauge",
+  "z": "tab1",
+  "group": "g_dec",
+  "order": 1,
+  "x": 1130,
+  "y": 180,
+  "wires": [],
+  "name": "",
+  "gtype": "gage",
+  "title": "RUL selon la règle choisie",
+  "label": "pas",
+  "format": "{{value}}",
+  "min": 0,
+  "max": 3000,
+  "colors": [
+   "#d62728",
+   "#ff7f0e",
+   "#2ca02c"
+  ],
+  "seg1": "120",
+  "seg2": "500",
+  "diff": false,
+  "className": ""
+ },
+ {
+  "id": "status",
+  "type": "ui_text",
+  "z": "tab1",
+  "group": "g_dec",
+  "order": 2,
+  "x": 1130,
+  "y": 240,
+  "wires": [],
+  "name": "",
+  "label": "Décision",
+  "format": "{{msg.payload}}",
+  "layout": "col-center"
+ },
+ {
+  "id": "info",
+  "type": "ui_text",
+  "z": "tab1",
+  "group": "g_dec",
+  "order": 3,
+  "x": 1130,
+  "y": 300,
+  "wires": [],
+  "name": "",
+  "label": "État du pronostic",
+  "format": "{{msg.payload}}",
+  "layout": "col-center"
+ },
+ {
+  "id": "sw_run",
+  "type": "ui_switch",
+  "z": "tab1",
+  "group": "g_ctrl",
+  "order": 1,
+  "x": 210,
+  "y": 200,
+  "wires": [
+   [
+    "setp"
+   ]
+  ],
+  "name": "",
+  "topic": "run",
+  "topicType": "str",
+  "label": "Marche / arrêt du capteur",
+  "tooltip": "",
+  "passthru": true,
+  "decouple": "false",
+  "style": "",
+  "onvalue": "true",
+  "onvalueType": "bool",
+  "offvalue": "false",
+  "offvalueType": "bool",
+  "animate": false
+ },
+ {
+  "id": "sl_life",
+  "type": "ui_slider",
+  "z": "tab1",
+  "group": "g_ctrl",
+  "order": 2,
+  "x": 210,
+  "y": 260,
+  "wires": [
+   [
+    "setp"
+   ]
+  ],
+  "name": "",
+  "topic": "life",
+  "topicType": "str",
+  "label": "Durée de vie réelle (pas)",
+  "tooltip": "",
+  "min": 800,
+  "max": 2800,
+  "step": 50,
+  "passthru": true,
+  "outs": "end"
+ },
+ {
+  "id": "sl_noise",
+  "type": "ui_slider",
+  "z": "tab1",
+  "group": "g_ctrl",
+  "order": 3,
+  "x": 210,
+  "y": 320,
+  "wires": [
+   [
+    "setp"
+   ]
+  ],
+  "name": "",
+  "topic": "noise",
+  "topicType": "str",
+  "label": "Niveau de bruit capteur",
+  "tooltip": "",
+  "min": 0.5,
+  "max": 3,
+  "step": 0.1,
+  "passthru": true,
+  "outs": "end"
+ },
+ {
+  "id": "sw_drift",
+  "type": "ui_switch",
+  "z": "tab1",
+  "group": "g_ctrl",
+  "order": 4,
+  "x": 210,
+  "y": 380,
+  "wires": [
+   [
+    "setp"
+   ]
+  ],
+  "name": "",
+  "topic": "drift",
+  "topicType": "str",
+  "label": "Défaut capteur : dérive",
+  "tooltip": "",
+  "passthru": true,
+  "decouple": "false",
+  "style": "",
+  "onvalue": "true",
+  "onvalueType": "bool",
+  "offvalue": "false",
+  "offvalueType": "bool",
+  "animate": false
+ },
+ {
+  "id": "dd_pol",
+  "type": "ui_dropdown",
+  "z": "tab1",
+  "group": "g_ctrl",
+  "order": 5,
+  "x": 210,
+  "y": 440,
+  "wires": [
+   [
+    "setp"
+   ]
+  ],
+  "name": "",
+  "topic": "policy",
+  "topicType": "str",
+  "label": "Règle de décision",
+  "tooltip": "",
+  "place": "",
+  "passthru": true,
+  "multiple": false,
+  "options": [
+   {
+    "label": "Médiane (q50) – risqué",
+    "value": "q50",
+    "type": "str"
+   },
+   {
+    "label": "q20",
+    "value": "q20",
+    "type": "str"
+   },
+   {
+    "label": "q10 – prudent",
+    "value": "q10",
+    "type": "str"
+   },
+   {
+    "label": "q05 – très prudent",
+    "value": "q05",
+    "type": "str"
+   }
+  ]
+ },
+ {
+  "id": "btn_reset",
+  "type": "ui_button",
+  "z": "tab1",
+  "group": "g_ctrl",
+  "order": 6,
+  "x": 210,
+  "y": 500,
+  "wires": [
+   [
+    "setp"
+   ]
+  ],
+  "name": "",
+  "label": "Réinitialiser",
+  "tooltip": "",
+  "color": "",
+  "bgcolor": "",
+  "icon": "",
+  "payload": "",
+  "payloadType": "str",
+  "topic": "reset",
+  "topicType": "str",
+  "className": ""
+ },
+ {
+  "id": "setp",
+  "type": "function",
+  "z": "tab1",
+  "name": "paramètres / reset",
+  "func": "if (msg.topic === 'reset') {\n  ['t', 'e'].forEach(k => flow.set(k, 0)); flow.set('run', false);\n  return [ { payload: [] }, { payload: \"Réinitialisé\" } ];\n}\nflow.set(msg.topic, msg.payload); return null;",
+  "outputs": 2,
+  "noerr": 0,
+  "x": 480,
+  "y": 320,
+  "wires": [
+   [
+    "c1r"
+   ],
+   [
+    "status"
+   ]
+  ]
+ },
+ {
+  "id": "c1r",
+  "type": "function",
+  "z": "tab1",
+  "name": "vider graphiques",
+  "func": "msg.payload=[]; return msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "x": 700,
+  "y": 420,
+  "wires": [
+   [
+    "c1",
+    "c2",
+    "rst"
+   ]
+  ]
+ },
+ {
+  "id": "rst",
+  "type": "http request",
+  "z": "tab1",
+  "name": "API /reset",
+  "method": "POST",
+  "ret": "txt",
+  "paytoqs": "ignore",
+  "url": "http://localhost:5000/reset",
+  "tls": "",
+  "persist": false,
+  "proxy": "",
+  "authType": "",
+  "senderr": false,
+  "headers": [],
+  "x": 900,
+  "y": 420,
+  "wires": [
+   []
+  ]
+ }
+]
